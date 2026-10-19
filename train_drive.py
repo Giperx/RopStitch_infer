@@ -19,17 +19,6 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-_torch_inverse = torch.inverse
-
-
-def _inverse_compat(tensor, *args, **kwargs):
-    if torch.is_tensor(tensor) and tensor.is_cuda:
-        return _torch_inverse(tensor.cpu(), *args, **kwargs).to(device=tensor.device)
-    return _torch_inverse(tensor, *args, **kwargs)
-
-
-torch.inverse = _inverse_compat
-
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CODE_DIR = os.path.join(ROOT, "woCoefNet", "Codes")
 sys.path.insert(0, CODE_DIR)
