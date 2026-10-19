@@ -238,6 +238,7 @@ def main():
 
     if args.benchmark > 0:
         seconds, mean_loss = run_steps(args.benchmark)
+        save_checkpoint(os.path.join(save_dir, "epoch000.pth"), net, optimizer, 0, args.benchmark)
         print(
             f"benchmark {args.benchmark} steps: {seconds:.3f}s/step, mean loss {mean_loss:.4f}",
             flush=True,
