@@ -33,7 +33,7 @@ def main():
     parser.add_argument("--gpu", default="0")
     parser.add_argument("--stage", choices=("both", "align", "coef"), default="both")
     parser.add_argument("--epochs", type=int, required=True)
-    parser.add_argument("--align-batch", type=int, default=7)
+    parser.add_argument("--align-batch", type=int, default=4)
     parser.add_argument("--coef-batch", type=int, default=4)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--benchmark", type=int, default=0)

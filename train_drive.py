@@ -166,7 +166,7 @@ def main():
     parser = argparse.ArgumentParser(description="Finetune RopStitch on cam5/cam4 and cam5/cam3 pairs")
     parser.add_argument("--dataset", required=True, choices=sorted(SPECS))
     parser.add_argument("--epochs", type=int, default=None, help="default: nuscenes 1, lyft 3, widedrive3 3")
-    parser.add_argument("--batch-size", type=int, default=7, help="largest full step that fits a 24GB 4090")
+    parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--init", default=WEIGHT)
     parser.add_argument("--scratch", action="store_true")
