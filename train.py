@@ -29,7 +29,7 @@ def run(command):
 
 def main():
     parser = argparse.ArgumentParser(description="RopStitch alignment then coefficient finetuning")
-    parser.add_argument("--dataset", required=True, choices=("nuscenes", "lyft", "widedrive3"))
+    parser.add_argument("--dataset", required=True, choices=("nuscenes", "lyft", "lyft1920", "lyft1224", "widedrive3"))
     parser.add_argument("--gpu", default="0")
     parser.add_argument("--stage", choices=("both", "align", "coef"), default="both")
     parser.add_argument("--epochs", type=int, required=True)
@@ -40,7 +40,14 @@ def main():
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
-    align_dir = ROOT / "outputs" / "finetune" / args.dataset
+    names = ("lyft1920", "lyft1224") if args.dataset == "lyft" else (args.dataset,)
+    for name in names:
+        args.dataset = name
+        align_dir = ROOT / "outputs" / "finetune" / name
+        run_dataset(args, align_dir)
+
+
+def run_dataset(args, align_dir):
     if args.stage in ("both", "align"):
         command = [
             sys.executable, "-u", str(ROOT / "train_drive.py"),

@@ -94,13 +94,18 @@ def build_model(net, input1_tensor, input2_tensor, is_training = True):
     # network
     if is_training == True:
         aug_input1_tensor, aug_input2_tensor = data_aug(input1_tensor, input2_tensor)
+        aug_input1_tensor = F.interpolate(aug_input1_tensor, size=(512, 512), mode="bilinear", align_corners=False)
+        aug_input2_tensor = F.interpolate(aug_input2_tensor, size=(512, 512), mode="bilinear", align_corners=False)
         H_motion, mesh_motion_ref, mesh_motion_tgt = net(aug_input1_tensor, aug_input2_tensor, coef, alpha)
     else:
         H_motion, mesh_motion_ref, mesh_motion_tgt = net(input1_tensor, input2_tensor, coef, alpha)
 
     H_motion = H_motion.reshape(-1, 4, 2)
+    H_motion = torch.stack([H_motion[..., 0] * img_w / 512.0, H_motion[..., 1] * img_h / 512.0], 2)
     mesh_motion_ref = mesh_motion_ref.reshape(-1, grid_h+1, grid_w+1, 2)
+    mesh_motion_ref = torch.stack([mesh_motion_ref[..., 0] * img_w / 512.0, mesh_motion_ref[..., 1] * img_h / 512.0], 3)
     mesh_motion_tgt = mesh_motion_tgt.reshape(-1, grid_h+1, grid_w+1, 2)
+    mesh_motion_tgt = torch.stack([mesh_motion_tgt[..., 0] * img_w / 512.0, mesh_motion_tgt[..., 1] * img_h / 512.0], 3)
 
     # initialize the source points bs x 4 x 2
     src_p = torch.tensor([[0., 0.], [img_w, 0.], [0., img_h], [img_w, img_h]])

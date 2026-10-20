@@ -36,12 +36,13 @@ SPECS = {
         "epochs": 1,
         "sources": [source("nuscenes/processed_10Hz_v2", "nuscenes/processed_10Hz_v2/nuScenes_Train.txt")],
     },
-    "lyft": {
+    "lyft1920": {
         "epochs": 3,
-        "sources": [
-            source("lyft/lyft_train1920_3cams", "lyft/lyft_train1920_3cams/train1920.txt"),
-            source("lyft/lyft_train1224_3cams", "lyft/lyft_train1224_3cams/train1224.txt"),
-        ],
+        "sources": [source("lyft/lyft_train1920_3cams", "lyft/lyft_train1920_3cams/train1920.txt")],
+    },
+    "lyft1224": {
+        "epochs": 3,
+        "sources": [source("lyft/lyft_train1224_3cams", "lyft/lyft_train1224_3cams/train1224.txt")],
     },
     "widedrive3": {
         "epochs": 3,
@@ -92,9 +93,14 @@ def collect_pairs(spec):
     return pairs, scenes, missing
 
 
+def input_size(dataset):
+    return (518, 434) if "1224" in dataset else (518, 294)
+
+
 class DrivingPairs(Dataset):
-    def __init__(self, pairs):
+    def __init__(self, pairs, dataset):
         self.pairs = pairs
+        self.dataset = dataset
 
     def __len__(self):
         return len(self.pairs)
@@ -104,7 +110,7 @@ class DrivingPairs(Dataset):
         image = cv2.imread(path, cv2.IMREAD_COLOR)
         if image is None:
             raise RuntimeError(f"failed to read {path}")
-        image = cv2.resize(image, (512, 512), interpolation=cv2.INTER_AREA)
+        image = cv2.resize(image, input_size(self.dataset), interpolation=cv2.INTER_AREA)
         array = image.astype(np.float32)
         array = (array / 127.5) - 1.0
         return torch.from_numpy(np.transpose(array, (2, 0, 1)))
@@ -162,7 +168,7 @@ def main():
         flush=True,
     )
     loader = DataLoader(
-        DrivingPairs(pairs),
+        DrivingPairs(pairs, args.dataset),
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.workers,

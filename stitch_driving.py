@@ -101,10 +101,18 @@ def find_image(scene_dir, frame, cam):
     raise FileNotFoundError(f"no camera {cam} frame {frame} under {image_dir}")
 
 
+def input_size(dataset):
+    return (518, 434) if "1224" in str(dataset) else (518, 294)
+
+
 def load_bgr(path, max_side):
     image = cv2.imread(path, cv2.IMREAD_COLOR)
     if image is None:
         raise RuntimeError(f"failed to read {path}")
+    if isinstance(max_side, tuple):
+        if (image.shape[1], image.shape[0]) != max_side:
+            image = cv2.resize(image, max_side, interpolation=cv2.INTER_AREA)
+        return image
     height, width = image.shape[:2]
     scale = min(1.0, float(max_side) / max(height, width))
     if scale < 1.0:
@@ -426,7 +434,7 @@ def main():
                     pending.append((method, preview_dir, metric_dir))
             if not pending:
                 continue
-            images = {cam: load_bgr(find_image(scene_dir, frame, cam), args.max_side) for cam in (5, 4, 3)}
+            images = {cam: load_bgr(find_image(scene_dir, frame, cam), input_size(args.dataset)) for cam in (5, 4, 3)}
             for method, preview_dir, metric_dir in pending:
                 try:
                     if method == "chain":

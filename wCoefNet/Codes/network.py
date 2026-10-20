@@ -243,6 +243,8 @@ def data_aug(img1, img2):
 
 
 def build_model(net, coef_net, input1_tensor, input2_tensor, is_training = True):
+    input1_tensor = F.interpolate(input1_tensor, size=(512, 512), mode="bilinear", align_corners=False)
+    input2_tensor = F.interpolate(input2_tensor, size=(512, 512), mode="bilinear", align_corners=False)
     batch_size, _, img_h, img_w = input1_tensor.size()
     alpha = torch.rand((batch_size, 2, 1, 1)).cuda()
     # network
