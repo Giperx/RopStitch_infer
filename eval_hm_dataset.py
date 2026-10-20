@@ -39,16 +39,29 @@ SPECS = {
 }
 
 
+def _lpips(render, gt):
+    import torch
+    import lpips
+    if not hasattr(_lpips, "model"):
+        _lpips.model = lpips.LPIPS(net="alex").cuda().eval()
+    tensor = lambda image: torch.from_numpy(image.transpose(2, 0, 1)).float().unsqueeze(0).cuda() * 2 - 1
+    with torch.no_grad():
+        return float(_lpips.model(tensor(render), tensor(gt)))
+
+
 def mean_rows(rows):
     if not rows:
         return None
-    return {
+    stats = {
         "hm_psnr": float(np.mean([row["hm_psnr"] for row in rows if np.isfinite(row["hm_psnr"])])),
         "hm_ssim": float(np.mean([row["hm_ssim"] for row in rows])),
         "hm_mae": float(np.mean([row["hm_mae"] for row in rows])),
         "hm_rmse": float(np.mean([row["hm_rmse"] for row in rows])),
         "n": len(rows),
     }
+    if "lpips" in rows[0]:
+        stats["lpips"] = float(np.mean([row["lpips"] for row in rows]))
+    return stats
 
 
 def mean_of(stats):
@@ -63,6 +76,8 @@ def format_stats(stats, frames=True):
     )
     if frames and "n" in stats:
         text += f", Frames: {stats['n']}"
+    if "lpips" in stats:
+        text += f", LPIPS: {stats['lpips']:.4f}"
     return text
 
 
@@ -95,6 +110,8 @@ def score_spec(spec):
             if direct:
                 mask = np.ones(render.shape[:2], dtype=bool)
             row = frame_hm(render, gt, mask, match=not direct)
+            if direct and row is not None:
+                row["lpips"] = _lpips(render, gt)
             if row is None:
                 skipped += 1
                 continue
