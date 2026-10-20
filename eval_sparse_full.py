@@ -13,12 +13,14 @@ from PIL import Image
 from skimage.exposure import match_histograms
 
 
-def frame_hm(render, gt, mask):
+def frame_hm(render, gt, mask, match=True):
     if mask.sum() == 0:
         return None
     pred = render[mask]
     target = gt[mask]
-    matched = match_histograms(pred[np.newaxis, ...], target[np.newaxis, ...], channel_axis=-1)[0]
+    if match:
+        pred = match_histograms(pred[np.newaxis, ...], target[np.newaxis, ...], channel_axis=-1)[0]
+    matched = pred
     diff = matched - target
     mae = float(np.mean(np.abs(diff)))
     mse = float(np.mean(diff ** 2))

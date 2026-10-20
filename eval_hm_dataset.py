@@ -34,6 +34,7 @@ SPECS = {
         "pred": os.path.join(ROOT, "outputs/metric_eval/widedrive3/pairwise"),
         "gt": os.path.join(ROOT, "datasets/WideDrive_processed/sparseWideFOVImages3_1554x294"),
         "cam": 2,
+        "direct": True,
     },
 }
 
@@ -90,14 +91,17 @@ def score_spec(spec):
             gt = np.array(Image.open(gt_path).convert("RGB")).astype(np.float64) / 255.0
             mask = np.array(Image.open(mask_path).convert("L")) > 127
             gt, mask = match_gt(render, gt, mask)
-            row = frame_hm(render, gt, mask)
+            direct = spec.get("direct")
+            if direct:
+                mask = np.ones(render.shape[:2], dtype=bool)
+            row = frame_hm(render, gt, mask, match=not direct)
             if row is None:
                 skipped += 1
                 continue
             scene_full.append(row)
             slices = region_slices(render.shape[1])
             for region, (x0, x1) in slices.items():
-                region_row = frame_hm(render[:, x0:x1], gt[:, x0:x1], mask[:, x0:x1])
+                region_row = frame_hm(render[:, x0:x1], gt[:, x0:x1], mask[:, x0:x1], match=not direct)
                 if region_row is not None:
                     scene_regions[region].append(region_row)
         if scene_full:
