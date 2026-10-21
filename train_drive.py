@@ -17,7 +17,7 @@ import time
 import cv2
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Sampler
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CODE_DIR = os.path.join(ROOT, "woCoefNet", "Codes")
@@ -46,6 +46,13 @@ SPECS = {
     "lyft1224": {
         "epochs": 3,
         "sources": [source("lyft/lyft_train1224_3cams", "lyft/lyft_train1224_3cams/train1224.txt")],
+    },
+    "lyft": {
+        "epochs": 3,
+        "sources": [
+            source("lyft/lyft_train1920_3cams", "lyft/lyft_train1920_3cams/train1920.txt"),
+            source("lyft/lyft_train1224_3cams", "lyft/lyft_train1224_3cams/train1224.txt"),
+        ],
     },
     "widedrive3": {
         "epochs": 3,
@@ -76,8 +83,9 @@ def index_pairs(image_root, scenes):
                 cams.setdefault(frame, set()).add(cam)
         for frame, present in cams.items():
             if {"3", "4", "5"} <= present:
-                pairs.append((image_root, scene, frame, 4))
-                pairs.append((image_root, scene, frame, 3))
+                size = input_size(image_root)
+                pairs.append((image_root, scene, frame, 4, size))
+                pairs.append((image_root, scene, frame, 3, size))
     return pairs, missing
 
 
@@ -114,13 +122,15 @@ class DrivingPairs(Dataset):
         image = cv2.imread(path, cv2.IMREAD_COLOR)
         if image is None:
             raise RuntimeError(f"failed to read {path}")
-        image = cv2.resize(image, input_size(self.dataset), interpolation=cv2.INTER_AREA)
+        image = cv2.resize(image, self._size, interpolation=cv2.INTER_AREA)
+        image = cv2.resize(image, (512, 512), interpolation=cv2.INTER_AREA)
         array = image.astype(np.float32)
         array = (array / 127.5) - 1.0
         return torch.from_numpy(np.transpose(array, (2, 0, 1)))
 
     def __getitem__(self, index):
-        image_root, scene, frame, side = self.pairs[index]
+        image_root, scene, frame, side, size = self.pairs[index]
+        self._size = size
         left = self._load(image_root, scene, frame, 5)
         right = self._load(image_root, scene, frame, side)
         if random.randint(0, 1) == 1:
@@ -168,6 +178,32 @@ def save_checkpoint(path, net, optimizer, epoch, step):
     print(f"saved {path}", flush=True)
 
 
+class SameSizeBatches(Sampler):
+    def __init__(self, sizes, batch_size, seed=0):
+        self.sizes = list(sizes)
+        self.batch_size = batch_size
+        self.seed = seed
+
+    def __iter__(self):
+        groups = {}
+        for index, size in enumerate(self.sizes):
+            groups.setdefault(size, []).append(index)
+        rng = random.Random(self.seed)
+        batches = []
+        for indexes in groups.values():
+            rng.shuffle(indexes)
+            for start in range(0, len(indexes) - self.batch_size + 1, self.batch_size):
+                batches.append(indexes[start:start + self.batch_size])
+        rng.shuffle(batches)
+        return iter(batches)
+
+    def __len__(self):
+        groups = {}
+        for size in self.sizes:
+            groups[size] = groups.get(size, 0) + 1
+        return sum(count // self.batch_size for count in groups.values())
+
+
 def main():
     parser = argparse.ArgumentParser(description="Finetune RopStitch on cam5/cam4 and cam5/cam3 pairs")
     parser.add_argument("--dataset", required=True, choices=sorted(SPECS))
@@ -202,10 +238,20 @@ def main():
         flush=True,
     )
 
-    loader = DataLoader(
-        DrivingPairs(pairs, args.dataset),
-        batch_size=args.batch_size,
-        shuffle=True,
+    sizes = [pair[4] for pair in pairs]
+    dataset = DrivingPairs(pairs, args.dataset)
+    if len(set(sizes)) > 1:
+        loader = DataLoader(
+            dataset,
+            batch_sampler=SameSizeBatches(sizes, args.batch_size, args.seed),
+            num_workers=args.workers,
+            pin_memory=True,
+        )
+    else:
+        loader = DataLoader(
+            dataset,
+            batch_size=args.batch_size,
+            shuffle=True,
         num_workers=args.workers,
         drop_last=True,
         pin_memory=True,
