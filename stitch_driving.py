@@ -10,6 +10,8 @@ Metric crop, not a registration:
 """
 import argparse
 import os
+import re
+import subprocess
 import sys
 
 import cv2
@@ -127,14 +129,76 @@ def to_tensor(image, device):
     return torch.from_numpy(np.ascontiguousarray(array)).unsqueeze(0).to(device)
 
 
+class MethodMemoryError(RuntimeError):
+    """The stitch itself needs more memory than the GPU, with nobody else using it."""
+
+
+def is_oom(exc):
+    return "out of memory" in str(exc).lower()
+
+
+def other_process_holds_gpu(exc=None, minimum_mib=1024):
+    me = os.getpid()
+    if exc is not None:
+        for pid, amount, unit in re.findall(r"Process (\d+) has ([0-9.]+) ([MG]iB)", str(exc)):
+            if int(pid) == me:
+                continue
+            mib = float(amount) * (1024 if unit.startswith("G") else 1)
+            if mib >= minimum_mib:
+                return True
+    gpu = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0].strip() or "0"
+    try:
+        text = subprocess.check_output(
+            ["nvidia-smi", f"--id={gpu}", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"],
+            text=True, timeout=5, stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    for line in text.splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 2:
+            continue
+        try:
+            pid, used = int(parts[0]), float(parts[1])
+        except ValueError:
+            continue
+        if pid != me and used >= minimum_mib:
+            return True
+    return False
+
+
+def oom_kind(exc):
+    if not is_oom(exc):
+        return None
+    return "contention" if other_process_holds_gpu(exc) else "method"
+
+
+def camera_on_white(image):
+    height, width = image.shape[:2]
+    canvas = np.full((height, width * 3, 3), 255, np.uint8)
+    canvas[:, width:width * 2] = image
+    valid = np.zeros((height, width * 3), dtype=bool)
+    valid[:, width:width * 2] = True
+    return canvas, valid, valid.copy()
+
+
+def blend_weight(mask):
+    mask = mask.astype(np.uint8)
+    dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5).astype(np.float32)
+    if mask.size == 0 or mask.min() == 1 or not np.isfinite(dist).all():
+        return np.ones(mask.shape, np.float32)
+    return np.square(np.minimum(dist, 64.0))
+
+
 def blend_masked(ref, tgt, mask_ref, mask_tgt):
     mask_ref = mask_ref.astype(np.uint8)
     mask_tgt = mask_tgt.astype(np.uint8)
-    weight_ref = cv2.distanceTransform(mask_ref, cv2.DIST_L2, 5).astype(np.float32) ** 2
-    weight_tgt = cv2.distanceTransform(mask_tgt, cv2.DIST_L2, 5).astype(np.float32) ** 2
+    weight_ref = blend_weight(mask_ref)
+    weight_tgt = blend_weight(mask_tgt)
     weight = weight_ref + weight_tgt + 1e-6
     fused = ref * (weight_ref / weight)[..., None] + tgt * (weight_tgt / weight)[..., None]
     valid = (mask_ref | mask_tgt).astype(bool)
+    fused = np.nan_to_num(fused, nan=255.0)
     fused = np.clip(fused, 0, 255).astype(np.uint8)
     fused[~valid] = 255
     return fused, valid
@@ -445,8 +509,19 @@ def main():
                         image, valid, cam5, gt_w, gt_h, preview_dir, metric_dir, frame
                     )
                 except (RuntimeError, OSError, ValueError) as exc:
+                    kind = oom_kind(exc)
+                    torch.cuda.empty_cache()
+                    if kind == "contention":
+                        image, valid, cam5 = camera_on_white(images[5])
+                        save_metric(image, valid, cam5, gt_w, gt_h, preview_dir, metric_dir, frame)
+                        totals[method]["saved"] += 1
+                        print(f"  {method} {frame}: kept camera 5 on white, another process holds the GPU", flush=True)
+                        continue
                     totals[method]["failed"] += 1
-                    print(f"  skip {method} {scene} {frame}: {exc}", flush=True)
+                    if kind == "method":
+                        print(f"  fail {method} {scene} {frame}: method exceeds GPU memory, nothing saved", flush=True)
+                    else:
+                        print(f"  skip {method} {scene} {frame}: {exc}", flush=True)
                     continue
                 totals[method]["saved"] += 1
                 if index == 0:
