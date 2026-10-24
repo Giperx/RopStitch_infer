@@ -21,6 +21,7 @@ os.chdir(CODE_DIR)
 
 from loss import cal_ddmperception_loss  # noqa: E402
 from network import CoefNetwork, Network, build_model  # noqa: E402
+from train_drive import repair_buffers, stable_step  # noqa: E402
 from torchvision import models  # noqa: E402
 
 DATA = os.path.join(ROOT, "datasets")
@@ -143,13 +144,22 @@ def load_state(path):
 
 def train_step(net, coef_net, vgg, optimizer, left, right):
     optimizer.zero_grad(set_to_none=True)
+    fixed = repair_buffers(coef_net)
+    if fixed:
+        print(f"reset {fixed} nonfinite coef batch-norm buffers", flush=True)
     batch_out = build_model(net, coef_net, left, right)
     loss = 10 * cal_ddmperception_loss(
         vgg, left, right, batch_out["DDM_ref_list"], batch_out["DDM_tgt_list"]
     )
+    if not torch.isfinite(loss):
+        optimizer.zero_grad(set_to_none=True)
+        return None
     loss.backward()
     torch.nn.utils.clip_grad_norm_(coef_net.parameters(), max_norm=3, norm_type=2)
-    optimizer.step()
+    reason = stable_step(optimizer, coef_net.parameters())
+    if reason:
+        print(f"skip coef step: {reason}", flush=True)
+        return None
     return float(loss.item())
 
 
@@ -188,6 +198,7 @@ def main():
     parser.add_argument("--align", default=ALIGN_WEIGHT)
     parser.add_argument("--save-dir", default=None)
     parser.add_argument("--benchmark", type=int, default=0)
+    parser.add_argument("--max-steps", type=int, default=0)
     parser.add_argument("--seed", type=int, default=114514)
     args = parser.parse_args()
 
@@ -240,12 +251,13 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
 
     def save(epoch, step):
+        repair_buffers(coef_net)
         path = os.path.join(save_dir, f"epoch{epoch:03d}.pth")
         torch.save({"model": coef_net.state_dict(), "epoch": epoch, "glob_iter": step}, path)
         print(f"saved {path}", flush=True)
 
     step = 0
-    limit = args.benchmark if args.benchmark > 0 else None
+    limit = args.max_steps or args.benchmark or None
     for epoch in range(epochs):
         print(f"coef epoch {epoch + 1}/{epochs}", flush=True)
         for left, right in loader:
@@ -253,7 +265,10 @@ def main():
             right = right.to(device, non_blocking=True)
             loss = train_step(net, coef_net, vgg, optimizer, left, right)
             step += 1
-            if step == 1 or step % 50 == 0:
+            if loss is None:
+                if step == 1 or step % 50 == 0:
+                    print(f"coef step {step} skipped", flush=True)
+            elif step == 1 or step % 50 == 0:
                 print(f"coef step {step} loss {loss:.4f}", flush=True)
             if limit is not None and step >= limit:
                 save(epoch + 1, step)

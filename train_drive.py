@@ -145,8 +145,61 @@ def load_init(net, path):
     print(f"init {path}", flush=True)
 
 
+def stable_step(optimizer, parameters, max_growth=3.0):
+    """Apply the update, then undo it if the weights blow up or become non-finite."""
+    params = [p for p in parameters if p.requires_grad]
+    for p in params:
+        if p.grad is not None and not torch.isfinite(p.grad).all():
+            optimizer.zero_grad(set_to_none=True)
+            return "nonfinite grad"
+    with torch.no_grad():
+        before = torch.zeros((), device=params[0].device)
+        saved = []
+        for p in params:
+            before = before + p.detach().float().pow(2).sum()
+            saved.append(p.detach().clone())
+        before = torch.sqrt(before)
+    optimizer.step()
+    with torch.no_grad():
+        after = torch.zeros((), device=params[0].device)
+        bad = False
+        for p in params:
+            if not torch.isfinite(p).all():
+                bad = True
+                break
+            after = after + p.detach().float().pow(2).sum()
+        after = torch.sqrt(after) if not bad else after
+        if not bad and float(before) > 0 and float(after) > max_growth * float(before):
+            bad = True
+        if bad:
+            for p, old in zip(params, saved):
+                p.copy_(old)
+            optimizer.zero_grad(set_to_none=True)
+            return "weight x{:.1f}".format(float(after) / max(float(before), 1e-12))
+    return ""
+
+
+def repair_buffers(net):
+    """Batch-norm population stats update in forward and are not rolled back with the weights."""
+    fixed = 0
+    with torch.no_grad():
+        for module in net.modules():
+            mean = getattr(module, "running_mean", None)
+            var = getattr(module, "running_var", None)
+            if mean is None or var is None:
+                continue
+            if (not torch.isfinite(mean).all()) or (not torch.isfinite(var).all()):
+                mean.zero_()
+                var.fill_(1)
+                fixed += 1
+    return fixed
+
+
 def train_step(net, optimizer, left, right):
     optimizer.zero_grad(set_to_none=True)
+    fixed = repair_buffers(net)
+    if fixed:
+        print(f"reset {fixed} nonfinite batch-norm buffers", flush=True)
     batch_out = build_model(net, left, right)
     overlap_loss = cal_lp_loss(
         left,
@@ -163,9 +216,15 @@ def train_step(net, optimizer, left, right):
         + intra_grid_loss(batch_out["mesh_tgt"])
     )
     total = overlap_loss + 4 * nonoverlap_loss
+    if not torch.isfinite(total):
+        optimizer.zero_grad(set_to_none=True)
+        return None
     total.backward()
     torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=3, norm_type=2)
-    optimizer.step()
+    reason = stable_step(optimizer, net.parameters())
+    if reason:
+        print(f"skip step: {reason}", flush=True)
+        return None
     return total.item(), overlap_loss.item(), nonoverlap_loss.item()
 
 
@@ -216,6 +275,7 @@ def main():
     parser.add_argument("--save-every", type=int, default=2000)
     parser.add_argument("--log-every", type=int, default=50)
     parser.add_argument("--benchmark", type=int, default=0, help="run this many steps and exit")
+    parser.add_argument("--max-steps", type=int, default=0, help="stop after this many samples")
     parser.add_argument("--seed", type=int, default=114514)
     args = parser.parse_args()
 
@@ -273,8 +333,13 @@ def main():
             for left, right in loader:
                 left = left.to(device, non_blocking=True)
                 right = right.to(device, non_blocking=True)
-                total, overlap, regular = train_step(net, optimizer, left, right)
-                losses.append(total)
+                result = train_step(net, optimizer, left, right)
+                if result is None:
+                    losses.append(float("nan"))
+                    total = overlap = regular = float("nan")
+                else:
+                    total, overlap, regular = result
+                    losses.append(total)
                 step += 1
                 if step == 1 or step % args.log_every == 0 or step == limit:
                     elapsed = time.time() - started
@@ -311,8 +376,15 @@ def main():
         for left, right in loader:
             left = left.to(device, non_blocking=True)
             right = right.to(device, non_blocking=True)
-            total, overlap, regular = train_step(net, optimizer, left, right)
+            result = train_step(net, optimizer, left, right)
             step += 1
+            if result is None:
+                if step % args.log_every == 0:
+                    print(f"epoch {epoch + 1} step {step} skipped", flush=True)
+                if args.max_steps and step >= args.max_steps:
+                    break
+                continue
+            total, overlap, regular = result
             seen += 1
             loss_sum += total
             if step % args.log_every == 0:
@@ -323,8 +395,12 @@ def main():
                 )
             if args.save_every > 0 and step % args.save_every == 0:
                 save_checkpoint(os.path.join(save_dir, f"step{step:07d}.pth"), net, optimizer, epoch + 1, step)
+            if args.max_steps and step >= args.max_steps:
+                break
         scheduler.step()
         save_checkpoint(os.path.join(save_dir, f"epoch{epoch + 1:03d}.pth"), net, optimizer, epoch + 1, step)
+        if args.max_steps and step >= args.max_steps:
+            break
     print(f"done {args.dataset} steps {step}", flush=True)
 
 

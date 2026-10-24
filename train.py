@@ -37,14 +37,12 @@ def main():
     parser.add_argument("--coef-batch", type=int, default=4)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--benchmark", type=int, default=0)
+    parser.add_argument("--max-steps", type=int, default=0)
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
-    names = ("lyft1920", "lyft1224") if args.dataset == "lyft" else (args.dataset,)
-    for name in names:
-        args.dataset = name
-        align_dir = ROOT / "outputs" / "finetune" / name
-        run_dataset(args, align_dir)
+    align_dir = ROOT / "outputs" / "finetune" / args.dataset
+    run_dataset(args, align_dir)
 
 
 def run_dataset(args, align_dir):
@@ -58,6 +56,8 @@ def run_dataset(args, align_dir):
         ]
         if args.benchmark:
             command.extend(["--benchmark", str(args.benchmark)])
+        if args.max_steps:
+            command.extend(["--max-steps", str(args.max_steps)])
         run(command)
     if args.stage in ("both", "coef"):
         align = latest_epoch(align_dir) or str(RELEASED)
@@ -73,6 +73,8 @@ def run_dataset(args, align_dir):
         ]
         if args.benchmark:
             command.extend(["--benchmark", str(args.benchmark)])
+        if args.max_steps:
+            command.extend(["--max-steps", str(args.max_steps)])
         run(command)
 
 
