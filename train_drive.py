@@ -40,22 +40,22 @@ SPECS = {
         "sources": [source("nuscenes/processed_10Hz_v2", "nuscenes/processed_10Hz_v2/nuScenes_Train.txt")],
     },
     "lyft1920": {
-        "epochs": 3,
+        "epochs": 1,
         "sources": [source("lyft/lyft_train1920_3cams", "lyft/lyft_train1920_3cams/train1920.txt")],
     },
     "lyft1224": {
-        "epochs": 3,
+        "epochs": 1,
         "sources": [source("lyft/lyft_train1224_3cams", "lyft/lyft_train1224_3cams/train1224.txt")],
     },
     "lyft": {
-        "epochs": 3,
+        "epochs": 1,
         "sources": [
             source("lyft/lyft_train1920_3cams", "lyft/lyft_train1920_3cams/train1920.txt"),
             source("lyft/lyft_train1224_3cams", "lyft/lyft_train1224_3cams/train1224.txt"),
         ],
     },
     "widedrive3": {
-        "epochs": 3,
+        "epochs": 1,
         "sources": [source("WideDrive3_processed/WideDriveTrain", "WideDrive3_processed/WideDriveTrain/train.txt")],
     },
 }
@@ -216,7 +216,8 @@ def train_step(net, optimizer, left, right):
         + intra_grid_loss(batch_out["mesh_tgt"])
     )
     total = overlap_loss + 4 * nonoverlap_loss
-    if not torch.isfinite(total):
+    if (not torch.isfinite(total)) or float(total) > 10:
+        print(f"skip step: loss {float(total)}", flush=True)
         optimizer.zero_grad(set_to_none=True)
         return None
     total.backward()
@@ -321,7 +322,7 @@ def main():
     if not args.scratch:
         load_init(net, args.init)
     net.train()
-    optimizer = torch.optim.AdamW(net.parameters(), lr=4e-5, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW(net.parameters(), lr=1e-5, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.97)
     save_dir = args.save_dir or os.path.join(ROOT, "outputs", "finetune", args.dataset)
 

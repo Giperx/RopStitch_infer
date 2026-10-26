@@ -38,22 +38,22 @@ SPECS = {
         "sources": [source("nuscenes/processed_10Hz_v2", "nuscenes/processed_10Hz_v2/nuScenes_Train.txt")],
     },
     "lyft1920": {
-        "epochs": 3,
+        "epochs": 1,
         "sources": [source("lyft/lyft_train1920_3cams", "lyft/lyft_train1920_3cams/train1920.txt")],
     },
     "lyft1224": {
-        "epochs": 3,
+        "epochs": 1,
         "sources": [source("lyft/lyft_train1224_3cams", "lyft/lyft_train1224_3cams/train1224.txt")],
     },
     "lyft": {
-        "epochs": 3,
+        "epochs": 1,
         "sources": [
             source("lyft/lyft_train1920_3cams", "lyft/lyft_train1920_3cams/train1920.txt"),
             source("lyft/lyft_train1224_3cams", "lyft/lyft_train1224_3cams/train1224.txt"),
         ],
     },
     "widedrive3": {
-        "epochs": 3,
+        "epochs": 1,
         "sources": [source("WideDrive3_processed/WideDriveTrain", "WideDrive3_processed/WideDriveTrain/train.txt")],
     },
 }
@@ -151,7 +151,8 @@ def train_step(net, coef_net, vgg, optimizer, left, right):
     loss = 10 * cal_ddmperception_loss(
         vgg, left, right, batch_out["DDM_ref_list"], batch_out["DDM_tgt_list"]
     )
-    if not torch.isfinite(loss):
+    if (not torch.isfinite(loss)) or float(loss) > 100:
+        print(f"skip coef step: loss {float(loss)}", flush=True)
         optimizer.zero_grad(set_to_none=True)
         return None
     loss.backward()
@@ -246,7 +247,7 @@ def main():
     vgg = vgg.to(device).eval()
     for parameter in vgg.parameters():
         parameter.requires_grad_(False)
-    optimizer = torch.optim.Adam(coef_net.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-8)
+    optimizer = torch.optim.Adam(coef_net.parameters(), lr=1e-5, betas=(0.9, 0.999), eps=1e-8)
     save_dir = args.save_dir or os.path.join(ROOT, "outputs", "finetune", args.dataset, "coef")
     os.makedirs(save_dir, exist_ok=True)
 
