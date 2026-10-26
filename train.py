@@ -2,7 +2,8 @@
 """Run RopStitch driving finetuning as alignment, then the coefficient net.
 
 The alignment stage is woCoefNet. The coefficient stage freezes that checkpoint
-and trains CoefNetwork only. Each stage uses the driving epoch count.
+and trains CoefNetwork only. Each stage finetunes one epoch. nuScenes stops
+after 10000 steps.
 
     python train.py --dataset widedrive3 --gpu 6 --epochs 3
 """
@@ -39,6 +40,8 @@ def main():
     parser.add_argument("--benchmark", type=int, default=0)
     parser.add_argument("--max-steps", type=int, default=0)
     args = parser.parse_args()
+    if args.dataset == "nuscenes" and args.max_steps <= 0:
+        args.max_steps = 10000
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
     align_dir = ROOT / "outputs" / "finetune" / args.dataset
