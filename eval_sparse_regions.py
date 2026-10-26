@@ -29,10 +29,22 @@ def region_slices(width):
     }
 
 
+def blank_side(render, fraction=0.90, level=0.98):
+    white = render.min(axis=-1) >= level
+    third = white.shape[1] // 3
+    if third < 1:
+        return True
+    for start in (0, white.shape[1] - third):
+        if float(white[:, start:start + third].mean()) >= fraction:
+            return True
+    return False
+
+
 def score_dir(pred_dir, gt_dir, cam):
     names = sorted(name for name in os.listdir(pred_dir) if name.lower().endswith(".png"))
     buckets = {name: [] for name in REGION_ORDER}
     skipped = 0
+    blank = 0
     for name in names:
         frame = os.path.splitext(name)[0]
         gt_path, mask_path = find_gt(gt_dir, frame, cam)
@@ -40,6 +52,10 @@ def score_dir(pred_dir, gt_dir, cam):
             skipped += 1
             continue
         render = np.array(Image.open(os.path.join(pred_dir, name)).convert("RGB")).astype(np.float64) / 255.0
+        if blank_side(render):
+            blank += 1
+            print(f"reject {frame}: blank side", flush=True)
+            continue
         gt = np.array(Image.open(gt_path).convert("RGB")).astype(np.float64) / 255.0
         mask = np.array(Image.open(mask_path).convert("L")) > 127
         gt, mask = match_gt(render, gt, mask)
@@ -54,6 +70,7 @@ def score_dir(pred_dir, gt_dir, cam):
             scored = True
         if not scored:
             skipped += 1
+    print(f"blank-side rejected: {blank}", flush=True)
     return buckets, skipped
 
 

@@ -81,6 +81,20 @@ def format_stats(stats, frames=True):
     return text
 
 
+def blank_side(render, fraction=0.90, level=0.98):
+    image = render.astype(np.float64)
+    if image.max(initial=0) > 1.5:
+        image = image / 255.0
+    white = image.min(axis=-1) >= level
+    third = white.shape[1] // 3
+    if third < 1:
+        return True
+    for start in (0, white.shape[1] - third):
+        if float(white[:, start:start + third].mean()) >= fraction:
+            return True
+    return False
+
+
 def score_spec(spec):
     pred_root = spec["pred"]
     scenes = sorted(
@@ -90,6 +104,7 @@ def score_spec(spec):
     region_rows = {name: [] for name in REGION_ORDER}
     per_scene = []
     skipped = 0
+    blank = 0
     for scene in scenes:
         pred_dir = os.path.join(pred_root, scene)
         gt_dir = os.path.join(spec["gt"], scene)
@@ -103,6 +118,10 @@ def score_spec(spec):
                 skipped += 1
                 continue
             render = np.array(Image.open(os.path.join(pred_dir, name)).convert("RGB")).astype(np.float64) / 255.0
+            if blank_side(render):
+                blank += 1
+                print(f"  reject {scene} {frame}: blank side", flush=True)
+                continue
             gt = np.array(Image.open(gt_path).convert("RGB")).astype(np.float64) / 255.0
             mask = np.array(Image.open(mask_path).convert("L")) > 127
             gt, mask = match_gt(render, gt, mask)
@@ -127,6 +146,12 @@ def score_spec(spec):
                 region_rows[region].extend(scene_regions[region])
             per_scene.append((scene, mean_rows(scene_full), {name: mean_rows(rows) for name, rows in scene_regions.items()}))
             print(f"  {scene}: {len(scene_full)} frames", flush=True)
+    judged = len(full_rows) + blank
+    print(
+        f"Success: {len(full_rows)}/{judged} ({(len(full_rows) / judged if judged else 0):.1%}); "
+        f"blank-side rejected: {blank}",
+        flush=True,
+    )
     return full_rows, region_rows, per_scene, skipped
 
 
